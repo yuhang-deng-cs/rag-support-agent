@@ -1,260 +1,218 @@
 <div align="center">
 
-# 🏢 Enterprise RAG Knowledge Base & Autonomous Support Agent
+# RAG Support Agent
 
-[![Python Version](https://img.shields.io/badge/Python-3.12%20%7C%203.13-3776AB?logo=python&logoColor=white)](https://www.python.org/)
-[![FastAPI](https://img.shields.io/badge/FastAPI-0.115+-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
-[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16%20pgvector-4169E1?logo=postgresql&logoColor=white)](https://github.com/pgvector/pgvector)
-[![Celery](https://img.shields.io/badge/Celery-5.4%20Async-37814A?logo=celery&logoColor=white)](https://docs.celeryq.dev/)
-[![Redis](https://img.shields.io/badge/Redis-7.0%20Queue-DC382D?logo=redis&logoColor=white)](https://redis.io/)
-[![React](https://img.shields.io/badge/React-18%20Tailwind-61DAFB?logo=react&logoColor=black)](https://react.dev/)
-[![Docker](https://img.shields.io/badge/Docker-Compose%20Ready-2496ED?logo=docker&logoColor=white)](https://www.docker.com/)
-[![Tests](https://img.shields.io/badge/pytest-9%20passed-brightgreen?logo=pytest&logoColor=white)](https://docs.pytest.org/)
-[![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+**A multi-tenant RAG support agent where PostgreSQL itself guarantees one customer can never retrieve another customer's documents.**
 
-<p align="center">
-  <b>A Production-Grade, Multi-Tenant Retrieval-Augmented Generation (RAG) & Agentic Support Platform</b><br>
-  Built with Server-Sent Events (SSE) Typewriter Streaming, Token Context Compression, Celery Async Ingestion, JWT/RBAC Security, and a Modern React Workspace.
-</p>
+[![CI](https://github.com/yuhang-deng-cs/rag-support-agent/actions/workflows/ci.yml/badge.svg)](https://github.com/yuhang-deng-cs/rag-support-agent/actions/workflows/ci.yml)
+[![Python](https://img.shields.io/badge/python-3.11%20%7C%203.12%20%7C%203.13-3776AB)](pyproject.toml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-[Key Features](#-key-features) • [System Architecture](#-system-architecture) • [Engineering Highlights](#-engineering-highlights) • [Quick Start](#-quick-start) • [API Specification](#-api-specification) • [Automated Tests](#-automated-testing-pytest)
+English · [简体中文](README.zh-CN.md)
+
+<img src="docs/images/acme.png" alt="Acme's agent answers a billing question with citations, then refuses a question about another tenant's incident" width="820">
+
+<sub>Acme's agent answers from Acme's docs with citations — and finds nothing when asked about Umbra's confidential incident, even though it sits in the same database.</sub>
 
 </div>
 
 ---
 
-## 📖 Overview
+## Why this exists
 
-**Enterprise RAG Support Agent** is an end-to-end, enterprise-ready Retrieval-Augmented Generation (RAG) system engineered to overcome the core obstacles of deploying LLMs in mission-critical corporate environments: **multi-tenant data security, context window noise, high-volume ingestion latency, and hallucination control**.
+Most multi-tenant RAG examples isolate customers with a `WHERE tenant_id = ?` in application code.
+One forgotten filter, one ORM query written in a hurry, one prompt-injected tool call — and a vector
+search happily returns another customer's data to the LLM.
 
-### Core Value Drivers:
-1. **Multi-Tenant Row-Level Security**: Physical and logical tenant isolation powered by PostgreSQL + `pgvector` composite indices (`tenant_id`), preventing cross-departmental data leakage between general corporate guidelines and confidential departmental records (e.g., Executive Payroll, Finance, Core Engineering).
-2. **Context Compression & Pruning**: Dynamic semantic chunk pruning engine that cuts **70% to 85% of redundant context tokens**, dramatically slashing LLM inference costs and protecting model attention from distractors.
-3. **Agentic Intent Routing**: Tri-stream routing that dispatches incoming queries into **Direct Chitchat** (0 DB queries), **Workflow Action Tickets** (e.g., automated leave approval draft generation), and **Dense Vector Knowledge Retrieval**.
-4. **Decoupled Asynchronous Ingestion**: Celery + Redis background processing returns `HTTP 202 Accepted` in `< 60ms`, handling large document chunking, embedding generation, and indexing without blocking HTTP workers.
-5. **Zero-Trust Security & RBAC**: Bcrypt-hashed password storage, JWT Access Token issuance, and fine-grained Role-Based Access Control (`admin` vs. `staff`).
-6. **Real-time SSE Streaming Workspace**: Modern React 18 typewriter frontend providing low-latency token streaming, compression metrics, and evidence source attribution cards.
+This project treats tenant isolation as a **database invariant**, not a coding convention:
 
----
+| Layer | What enforces it |
+|---|---|
+| **Identity** | The tenant comes only from a signed JWT, re-checked against the user row on every request. Request bodies that try to name a `tenant_id` are rejected (`422`). |
+| **Application** | Every query on tenant data runs inside `Database.tenant_session(tenant_id)` and filters by tenant. |
+| **Database** | PostgreSQL **Row-Level Security** with `FORCE ROW LEVEL SECURITY`. Each transaction pins `app.tenant_id`; the policy hides every other tenant's rows — even from a raw `SELECT *` with no `WHERE`. No tenant set ⇒ no rows (fails closed). |
+| **Schema** | A composite foreign key makes it impossible for a chunk to point at another tenant's document. |
 
-## 🏛️ System Architecture
+…and it **proves** it with an adversarial test suite that runs against a real PostgreSQL in CI.
+
+## Features
+
+- 🔒 **Tenant isolation enforced by Postgres RLS** — plus tests that bypass the app and query the DB directly
+- 🧪 **Attack tests**: `alg:none` JWTs, wrong-key and tampered tokens, expired/deactivated users, cross-tenant IDs, tenant spoofing, prompt-injection documents
+- 🔎 **Semantic search with pgvector** (HNSW index) — falls back to SQLite + NumPy for zero-setup local dev
+- 🧠 **Runs fully offline**: local ONNX embeddings via [fastembed](https://github.com/qdrant/fastembed) and an extractive answer mode — no API key needed to try it
+- 🔌 **Any OpenAI-compatible LLM** for generated answers: OpenAI, DeepSeek, Ollama, vLLM, LiteLLM, …
+- 📎 **Cited, streamed answers** over SSE, with an **abstain guardrail** when retrieval confidence is low
+- ✂️ **Context pruning** that trims retrieved chunks before the LLM call — with measured savings, not marketing numbers
+- 🙋 **Human escalation**: unanswerable questions become tickets
+- 👥 **Workspaces & invites**: sign-up creates a tenant + admin; teammates join with single-use invite codes
+- 📊 **Reproducible evaluation** (`scripts/eval.py`) with a threshold sweep, run in CI
+
+## Quick start
+
+### Docker (recommended — gives you PostgreSQL + RLS)
+
+```bash
+git clone https://github.com/yuhang-deng-cs/rag-support-agent.git
+cd rag-support-agent
+docker compose up --build
+```
+
+Open <http://localhost:8000> and click a demo account (password `demo-password`):
+
+| Account | Workspace | Try asking |
+|---|---|---|
+| `acme-member` | Acme Cloud (SaaS docs) | *How long do refunds take?* · *What caused the duplicate SMS incident at Riverside?* ← Umbra's data, must fail |
+| `umbra-admin` | Umbra Health (clinic software) | *What caused the duplicate SMS incident at Riverside?* ← works here |
+
+The header badge shows **RLS enforced** when the app is connected as a role that RLS applies to.
+
+### Without Docker
+
+```bash
+python -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\activate
+pip install -e ".[local]"
+cp .env.example .env
+uvicorn app.main:app --reload
+```
+
+This uses SQLite (isolation enforced by the application layer only; the UI badge says so).
+Point `DATABASE_URL` at PostgreSQL to get RLS — see [docs/security.md](docs/security.md#running-postgresql-safely).
+
+### Use a real LLM
+
+Answers are extractive (verbatim cited sentences) by default. For generated answers, set in `.env`:
+
+```bash
+LLM_PROVIDER=openai
+LLM_BASE_URL=https://api.openai.com/v1     # or https://api.deepseek.com/v1, http://localhost:11434/v1 (Ollama), ...
+LLM_MODEL=gpt-4o-mini
+LLM_API_KEY=sk-...
+```
+
+## How isolation works
 
 ```mermaid
-flowchart TD
-    User["👤 Client / Web UI (React 18 + Tailwind)"]
-    
-    subgraph Gateway ["⚡ API Gateway (FastAPI 0.115)"]
-        Auth["🔒 JWT & RBAC Auth (Bcrypt + Scopes)"]
-        StreamRouter["📡 SSE Streaming Engine (X-Accel-Buffering: no)"]
-        AsyncUpload["⚡ Document Ingestion Router (HTTP 202)"]
-    end
-
-    subgraph AgenticCore ["🧠 Agentic Routing & Context Engine"]
-        Router{"🧭 Intent Router"}
-        Chitchat["💬 Chitchat Path (0 DB Queries)"]
-        ActionTool["⚡ Action Tool Ticket (OA Workflow Dispatch)"]
-        Compressor["🚀 Context Compressor (Prunes 70-85% Tokens)"]
-    end
-
-    subgraph StorageLayer ["💾 Persistent Data & Vector Store"]
-        Postgres[("🐘 PostgreSQL 16 + pgvector\n(Multi-Tenant Isolation)")]
-        SQLiteFallback[("💾 Resilient SQLite Fallback\n(Auto Dev Failover)")]
-    end
-
-    subgraph AsyncWorker ["⚙️ Task Queue & Background Worker"]
-        Redis[("🔴 Redis 7 Broker")]
-        CeleryWorker["👷 Celery Worker (Async Chunk & Embed)"]
-    end
-
-    subgraph LLM ["🤖 LLM & Embedding Models"]
-        GeminiFlash["⚡ Google Gemini 2.5 Flash"]
-        GeminiEmbed["📐 text-embedding-004"]
-    end
-
-    User -->|HTTP / SSE Stream| Gateway
-    Gateway --> Auth
-    Auth --> StreamRouter
-    Auth --> AsyncUpload
-
-    StreamRouter --> Router
-    Router -->|Greeting / FAQ| Chitchat
-    Router -->|Action Request| ActionTool
-    Router -->|Corporate Policy| Compressor
-
-    Compressor -->|Vector Similarity Query| Postgres
-    Compressor -.->|Local Dev Fallback| SQLiteFallback
-    Compressor -->|Pruned Core Evidence| GeminiFlash
-
-    AsyncUpload -->|Push Ingestion Task| Redis
-    Redis --> CeleryWorker
-    CeleryWorker -->|Generate Dense Vectors| GeminiEmbed
-    CeleryWorker -->|Persist Chunks with tenant_id| Postgres
-
-    Chitchat -->|SSE Chars| User
-    ActionTool -->|SSE Ticket Draft| User
-    GeminiFlash -->|SSE Streaming Answer| User
+sequenceDiagram
+    participant C as Client
+    participant A as API (FastAPI)
+    participant P as PostgreSQL (RLS)
+    C->>A: POST /chat/stream  Authorization: Bearer JWT
+    A->>A: verify JWT · load user · tenant = user.tenant_id
+    A->>P: BEGIN · set_config('app.tenant_id', tenant, true)
+    A->>P: SELECT ... ORDER BY embedding <=> :q LIMIT k
+    Note over P: policy: tenant_id = current_setting('app.tenant_id')<br/>other tenants' rows are invisible
+    P-->>A: only this tenant's chunks
+    A-->>C: SSE: sources → context → tokens → done
 ```
 
----
+The policy ([`app/db/rls.py`](app/db/rls.py)) applied to `documents`, `document_chunks` and `tickets`:
 
-## 🌟 Engineering Highlights
+```sql
+ALTER TABLE document_chunks ENABLE ROW LEVEL SECURITY;
+ALTER TABLE document_chunks FORCE ROW LEVEL SECURITY;   -- applies to the table owner too
+CREATE POLICY tenant_isolation ON document_chunks
+  USING      (tenant_id = current_setting('app.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('app.tenant_id', true));
+```
 
-| Module | Architectural Design & Implementation | Business Impact |
-| :--- | :--- | :--- |
-| **🏢 Multi-Tenant Data Isolation** | Composite indexing on `tenant_id` across `documents` and `document_chunks`. All queries and vector similarity searches (`<=>`) strictly enforce tenant scoping. | Guarantees zero cross-department data leakage between general policies and sensitive payroll/finance databases. |
-| **🚀 Context Pruning Engine** | Inspired by `context-mode` token reduction. Extracts root semantic keywords and dynamically prunes off-topic sentences from retrieved chunks. | Slashes **70% to 85% of redundant prompt tokens**, minimizes API billing, and maximizes LLM attention focus. |
-| **🧭 Agentic Intent Routing** | Inspired by `ruflo` agentic workflow pipelines. Triages requests into Chitchat, Action Tool execution, or Dense Retrieval. | Bypasses database queries completely for conversational greetings, delivering sub-15ms initial response latency. |
-| **⚡ Asynchronous Ingestion Pipeline** | Decouples document ingestion using Celery 5.4 + Redis 7. File uploads respond immediately with `HTTP 202 Accepted` (<60ms) and provide polling endpoints. | Prevents thread blocking during lengthy PDF/text chunking and vector calculations under heavy concurrent traffic. |
-| **🔒 Enterprise RBAC & Auth** | Salted bcrypt password hashing with cryptographic verification. Issues tamper-proof JWT access tokens embedding `sub`, `role`, and `tenant_id`. | Strictly restricts document upload and management capabilities to authorized administrators (`admin`). |
-| **🛡️ Out-of-Domain Guardrails** | Deterministic 2-gram hashing combined with domain keyword weighting and cosine distance threshold verification (`SIMILARITY_THRESHOLD = 0.25`). | Rejects external internet trivia and out-of-domain queries with clear boundary notices, preventing model hallucination. |
-| **🖥️ Modern React Console** | Lightweight, reactive single-page frontend powered by React 18 and Tailwind CSS, natively consuming Server-Sent Events (`text/event-stream`). | Delivers live typewriter rendering, task progress bars, tenant scope switching, and evidence reference cards. |
+RLS does not apply to superusers or `BYPASSRLS` roles, so the app connects as an unprivileged role
+([`infra/postgres/app_role.psql`](infra/postgres/app_role.psql)) and reports its status at
+`GET /api/v1/health`. When the RLS tests are run as a superuser, all of them fail — they really test the database.
 
----
+Full threat model: [docs/security.md](docs/security.md).
 
-## 📂 Project Structure
+## Evaluation
+
+`python scripts/eval.py` seeds the two demo workspaces and asks 26 questions: 19 answerable, 4
+cross-tenant (asking one tenant about the other's documents) and 3 off-topic.
+Results with the default `BAAI/bge-small-en-v1.5` embeddings, `top_k=4`, `RETRIEVAL_MIN_SCORE=0.6`:
+
+| Metric | Result |
+|---|---|
+| hit@k — expected document retrieved (answerable) | **100%** |
+| cross-tenant leaks — any source from another tenant | **0%** |
+| abstain — retrieved nothing for cross-tenant/off-topic | 71% |
+| answer text still present after context pruning | 95% |
+| context tokens saved by pruning | 37% |
+
+The 29% of non-abstentions are questions where the agent retrieved a loosely related document of
+**its own** tenant (e.g. Acme's SSO page for a HIPAA question) — never another tenant's.
+`python scripts/eval.py --sweep` shows the precision/recall trade-off of the abstain threshold:
+
+| min_score | hit@k | abstain | leaks |
+|---|---|---|---|
+| 0.50 | 100% | 43% | 0% |
+| 0.60 | 100% | 71% | 0% |
+| 0.65 | 84% | 100% | 0% |
+| 0.70 | 68% | 100% | 0% |
+
+The sample set is small and hand-written: treat these as a regression baseline, not a benchmark.
+
+## API
+
+Interactive docs at `/docs`. All endpoints are under `/api/v1`.
+
+| Method | Path | Who | Description |
+|---|---|---|---|
+| `POST` | `/auth/signup` | public | Create a workspace (tenant); caller becomes its admin |
+| `POST` | `/auth/join` | public | Join a workspace with a single-use invite code |
+| `POST` | `/auth/login` | public | Get an access token |
+| `GET` | `/auth/me` | member | Current user |
+| `POST` | `/invites` | admin | Create an invite (`member` or `admin`) |
+| `POST` | `/documents` | admin | Upload `.txt` / `.md` / `.pdf` (202, processed in background) |
+| `GET` | `/documents`, `/documents/{id}` | member | List / poll status |
+| `DELETE` | `/documents/{id}` | admin | Delete a document and its chunks |
+| `POST` | `/chat/stream` | member | Ask a question — SSE events `sources`, `context`, `token`, `done` |
+| `POST`/`GET` | `/tickets` | member | Escalate a question / list escalations |
+| `GET` | `/health` | public | Status, DB dialect, RLS status, providers |
+
+```bash
+TOKEN=$(curl -s localhost:8000/api/v1/auth/login -H 'Content-Type: application/json' \
+  -d '{"username":"acme-member","password":"demo-password"}' | jq -r .access_token)
+curl -N localhost:8000/api/v1/chat/stream -H "Authorization: Bearer $TOKEN" \
+  -H 'Content-Type: application/json' -d '{"question":"How long do refunds take?"}'
+```
+
+## Project layout
 
 ```text
-├── app/
-│   ├── api/
-│   │   ├── deps.py                 # JWT authentication dependencies & RBAC role guards
-│   │   └── v1/
-│   │       ├── auth.py             # User registration, password hashing & JWT login
-│   │       ├── chat.py             # Server-Sent Events (SSE) streaming typewriter endpoint
-│   │       └── documents.py        # Celery asynchronous document ingestion & status polling
-│   ├── core/
-│   │   ├── celery_app.py           # Celery application configuration & broker connection
-│   │   ├── config.py               # Pydantic BaseSettings environment configuration
-│   │   └── security.py             # Bcrypt password hashing & JWT encoder/decoder
-│   ├── db/
-│   │   └── session.py              # PostgreSQL/pgvector engine with auto SQLite fallback
-│   ├── models/
-│   │   ├── base.py                 # SQLAlchemy Declarative Base
-│   │   ├── schema.py               # Tenants, Documents, and DocumentChunk models
-│   │   └── user.py                 # User identity & role definitions
-│   ├── repositories/
-│   │   ├── user_repo.py            # User database persistence layer
-│   │   └── vector_repo.py          # Multi-tenant vector similarity search & chunk storage
-│   ├── services/
-│   │   ├── context_compressor.py   # Context pruning & token reduction service
-│   │   ├── intent_router.py        # Tri-stream agentic intent routing engine
-│   │   └── rag_service.py          # Core RAG orchestrator (embed, retrieve, prune, stream)
-│   ├── static/
-│   │   └── index.html              # React 18 modern workspace UI with SSE typewriter
-│   ├── tasks/
-│   │   └── document_tasks.py       # Celery asynchronous chunking & embedding worker task
-│   └── main.py                     # FastAPI application entry point, lifecycle & CORS setup
-├── sample_docs/
-│   └── enterprise_faq.txt          # Seed enterprise policies (Travel, Security, Benefits)
-├── tests/
-│   ├── conftest.py                 # Pytest fixtures & async test client configuration
-│   ├── test_api_endpoints.py       # Integration tests (Auth, SSE Streaming, Celery 202)
-│   └── test_rag_core.py            # Unit tests (IntentRouter, ContextCompressor)
-├── docker-compose.yml              # 4-container production orchestration (API, Worker, DB, Redis)
-├── Dockerfile                      # Production-optimized multi-stage container build
-├── requirements.txt                # Pinned production Python dependencies
-├── .env.example                    # Environment variable configuration template
-├── LICENSE                         # MIT Open Source License
-└── README.md                       # Comprehensive system documentation
+app/
+  api/            routes (auth, documents, chat, tickets), schemas, auth dependencies
+  core/           settings, password hashing, JWT
+  db/             models, sessions (tenant_session), RLS policies
+  rag/            chunking, embeddings, retrieval, pruning, LLM providers, answer pipeline
+  ingestion/      chunk → embed → store; optional Celery worker
+  static/         dependency-free web UI
+infra/postgres/   unprivileged app role for RLS
+scripts/eval.py   retrieval / guardrail / pruning evaluation
+tests/            API, attack, RLS and unit tests (SQLite + PostgreSQL)
 ```
 
----
-
-## 🚀 Quick Start
-
-### Option A: Local Development Setup
-
-#### 1. Clone the Repository
-```bash
-git clone https://github.com/cs50-citizen/rag-support-agent.git
-cd rag-support-agent
-```
-
-#### 2. Create and Activate Virtual Environment
-```bash
-# Windows
-python -m venv .venv
-.\.venv\Scripts\activate
-
-# Linux / macOS
-python3 -m venv .venv
-source .venv/bin/activate
-```
-
-#### 3. Install Dependencies
-```bash
-pip install -r requirements.txt
-```
-
-#### 4. Configure Environment
-```bash
-cp .env.example .env
-# Optional: Set GEMINI_API_KEY in .env to activate Google Gemini 2.5 Flash
-```
-
-#### 5. Launch Application
-```bash
-python -m uvicorn app.main:app --port 8000 --reload
-```
-
-Open your browser to:
-* 🖥️ **React Interactive Workspace**: [http://127.0.0.1:8000/](http://127.0.0.1:8000/)
-* 📚 **Interactive Swagger API Docs**: [http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs)
-
----
-
-### Option B: Docker Compose Full-Stack Deployment
-
-Deploy the entire production stack (PostgreSQL 16 with pgvector, Redis 7, FastAPI, and Celery Worker) with a single command:
+## Development
 
 ```bash
-docker compose up -d --build
+pip install -e ".[dev,local]"
+ruff check . && ruff format --check .
+pytest                                          # SQLite
+TEST_DATABASE_URL=postgresql://rag_app:...@localhost:5432/rag_test pytest   # + PostgreSQL & RLS tests
 ```
 
-Container Fleet:
-1. `rag_db`: PostgreSQL 16 with pre-installed `pgvector` extension.
-2. `rag_redis`: High-throughput Redis 7 message broker.
-3. `rag_api`: High-concurrency FastAPI HTTP and SSE streaming gateway.
-4. `rag_worker`: Dedicated Celery background document ingestion worker.
+See [CONTRIBUTING.md](CONTRIBUTING.md).
 
----
+## Limitations & roadmap
 
-## 📡 API Specification
+Honest about what this is: a well-tested reference implementation, not a turnkey product.
 
-| Method | Endpoint | Authorization | Description |
-| :--- | :--- | :--- | :--- |
-| `GET` | `/` or `/app` | Public | Serves the React 18 interactive streaming workspace. |
-| `POST` | `/api/v1/chat/stream` | Optional JWT | **SSE Streaming Endpoint**: Delivers real-time typewriter tokens, intent metadata, compression metrics, and source citations. |
-| `POST` | `/api/v1/auth/register` | Public | Registers a new user account with bcrypt-hashed credentials. |
-| `POST` | `/api/v1/auth/login` | Public | Authenticates user credentials and issues a signed JWT access token. |
-| `POST` | `/api/v1/documents/upload` | Staff / Admin | **Async Ingestion**: Accepts documents, enqueues Celery task, and returns `HTTP 202 Accepted` with `task_id`. |
-| `GET` | `/api/v1/documents/tasks/{task_id}` | Public | Polls ingestion progress, status (`PENDING`, `PROGRESS`, `SUCCESS`), and current pipeline step. |
-| `GET` | `/health` | Public | Health probe checking API uptime and database connectivity. |
+- [ ] Alembic migrations (schema is currently created on startup)
+- [ ] Hybrid search (BM25 + vectors) and reranking
+- [ ] Rate limiting and audit log
+- [ ] Conversation memory / follow-up questions
+- [ ] Larger evaluation set, including multilingual queries
+- Context pruning is a lexical heuristic; the extractive mode is a fallback, not an LLM.
 
----
+Ideas and PRs welcome — see the [issues](https://github.com/yuhang-deng-cs/rag-support-agent/issues).
 
-## 🧪 Automated Testing (pytest)
+## License
 
-The project includes an end-to-end automated testing suite with 100% pass rate:
-
-```bash
-pytest -v
-```
-
-```text
-tests/test_api_endpoints.py::test_health_check PASSED                    [ 11%]
-tests/test_api_endpoints.py::test_auth_workflow PASSED                   [ 22%]
-tests/test_api_endpoints.py::test_chat_stream_sse PASSED                 [ 33%]
-tests/test_api_endpoints.py::test_async_document_upload_and_status PASSED [ 44%]
-tests/test_rag_core.py::test_intent_router_chitchat PASSED               [ 55%]
-tests/test_rag_core.py::test_intent_router_action_tool PASSED            [ 66%]
-tests/test_rag_core.py::test_intent_router_knowledge_query PASSED        [ 77%]
-tests/test_rag_core.py::test_context_compressor_pruning PASSED           [ 88%]
-test_stream.py::test_streaming PASSED                                    [100%]
-======================= 9 passed in 21.88s =======================
-```
-
----
-
-## 📄 License
-
-This project is licensed under the [MIT License](LICENSE).
+[MIT](LICENSE)
