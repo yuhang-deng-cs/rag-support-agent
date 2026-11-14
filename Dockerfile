@@ -1,33 +1,31 @@
-# ==========================================
-# Enterprise RAG Knowledge Base - Dockerfile
-# ==========================================
+# syntax=docker/dockerfile:1
 FROM python:3.12-slim
 
-# 设置环境变量
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    DEBIAN_FRONTEND=noninteractive
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    FASTEMBED_CACHE_PATH=/opt/models
 
 WORKDIR /app
 
-# 安装系统级编译依赖 (PostgreSQL client, gcc 等)
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential \
-    libpq-dev \
-    curl \
-    && rm -rf /var/lib/apt/lists/*
+# Install dependencies (read from pyproject.toml) first, so code changes don't invalidate
+# this layer.
+COPY pyproject.toml README.md LICENSE ./
+RUN pip install $(python -c "import tomllib; p = tomllib.load(open('pyproject.toml', 'rb'))['project']; o = p['optional-dependencies']; print(' '.join(p['dependencies'] + o['local'] + o['celery']))")
 
-# 复制依赖清单并安装
-COPY requirements.txt .
-RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir -r requirements.txt
+# Bake the default embedding model into the image (no download at startup).
+ARG EMBEDDING_MODEL=BAAI/bge-small-en-v1.5
+RUN python -c "from fastembed import TextEmbedding; TextEmbedding('${EMBEDDING_MODEL}')"
 
-# 复制代码
-COPY . .
+COPY app ./app
+COPY sample_docs ./sample_docs
+RUN pip install --no-deps -e . \
+    && useradd --system --uid 10001 --home /app app \
+    && chown -R app /opt/models
 
-# 暴露 FastAPI 服务端口
+USER app
 EXPOSE 8000
-
-# 默认启动命令 (可通过 docker-compose 覆盖以启动 celery worker)
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
-
+HEALTHCHECK --interval=15s --timeout=3s --start-period=30s \
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/v1/health')"
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers"]
