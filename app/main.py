@@ -1,61 +1,96 @@
+"""FastAPI application factory."""
+
+from __future__ import annotations
+
+import logging
 from contextlib import asynccontextmanager
+from pathlib import Path
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-
-from app.core.config import settings
-from app.api.v1.chat import router as chat_router
-from app.api.v1.documents import router as documents_router
-from app.api.v1.auth import router as auth_router
-from app.services.rag_service import rag_service
-
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    # 服务启动：初始化数据库并完成默认租户向量表播种
-    await rag_service.initialize_database_and_seed()
-    yield
-    # 服务关闭清理 (如果需要)
-
-app = FastAPI(
-    title=settings.PROJECT_NAME,
-    description="企业级 RAG 知识库与智能助手后端 API，支持 SSE 流式打字机响应与多租户隔离架构。",
-    version="1.0.0",
-    docs_url="/docs",
-    redoc_url="/redoc",
-    lifespan=lifespan
-)
-
-# 配置跨域资源共享 (CORS)
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-# 挂载 API 路由
-app.include_router(auth_router, prefix=settings.API_V1_STR)
-app.include_router(chat_router, prefix=settings.API_V1_STR, tags=["Chat"])
-app.include_router(documents_router, prefix=settings.API_V1_STR)
-
-import os
 from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 
-@app.get("/", summary="React 知识库与智能助手控制台")
-@app.get("/app", summary="React 知识库与智能助手控制台")
-async def serve_frontend():
-    index_file = os.path.join(os.path.dirname(__file__), "static", "index.html")
-    if os.path.exists(index_file):
-        return FileResponse(index_file)
-    return {
-        "message": f"欢迎使用 {settings.PROJECT_NAME} API 服务！",
-        "docs_url": "/docs",
-        "health_check": "/health"
-    }
+from app import __version__
+from app.api.deps import Services
+from app.api.routes import auth, chat, documents, tickets
+from app.api.schemas import HealthOut
+from app.core.config import Settings, get_settings
+from app.db.session import Database
+from app.rag.embeddings import build_embedder
+from app.rag.llm import build_generator
+from app.rag.pipeline import RagPipeline
 
-@app.get("/health", summary="健康检查接口")
-async def health_check():
-    return {
-        "status": "healthy",
-        "version": "1.0.0"
-    }
+STATIC_DIR = Path(__file__).parent / "static"
+API_PREFIX = "/api/v1"
+
+
+def build_services(settings: Settings) -> Services:
+    db = Database(settings.database_url)
+    embedder = build_embedder(settings)
+    pipeline = RagPipeline(db, embedder, build_generator(settings), settings)
+    return Services(settings=settings, db=db, embedder=embedder, pipeline=pipeline)
+
+
+def create_app(settings: Settings | None = None) -> FastAPI:
+    settings = settings or get_settings()
+    logging.basicConfig(
+        level=settings.log_level, format="%(asctime)s %(levelname)s %(name)s: %(message)s"
+    )
+
+    @asynccontextmanager
+    async def lifespan(app: FastAPI):
+        services = build_services(settings)
+        app.state.services = services
+        await services.db.create_schema()
+        if settings.seed_demo:
+            from app.demo import seed_demo
+
+            await seed_demo(services)
+        yield
+        await services.db.dispose()
+
+    app = FastAPI(
+        title="RAG Support Agent",
+        version=__version__,
+        description="Multi-tenant RAG support agent with database-enforced tenant isolation.",
+        lifespan=lifespan,
+    )
+    if settings.cors_origins:
+        app.add_middleware(
+            CORSMiddleware,
+            allow_origins=settings.cors_origins,
+            allow_methods=["GET", "POST", "DELETE"],
+            allow_headers=["Authorization", "Content-Type"],
+        )
+
+    for module in (auth, documents, chat, tickets):
+        app.include_router(module.router, prefix=API_PREFIX)
+
+    @app.get(f"{API_PREFIX}/health", tags=["system"])
+    async def health() -> HealthOut:
+        services: Services = app.state.services
+        return HealthOut(
+            status="ok",
+            version=__version__,
+            database=services.db.engine.dialect.name,
+            row_level_security=services.db.rls,
+            embedding_provider=settings.embedding_provider,
+            llm_provider=settings.llm_provider,
+        )
+
+    @app.get(f"{API_PREFIX}/config", tags=["system"], include_in_schema=False)
+    async def public_config() -> dict:
+        """Non-secret flags the bundled web UI needs."""
+        return {"demo": settings.seed_demo, "signup": settings.allow_public_signup}
+
+    app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+
+    @app.get("/", include_in_schema=False)
+    async def index() -> FileResponse:
+        return FileResponse(STATIC_DIR / "index.html")
+
+    return app
+
+
+app = create_app()

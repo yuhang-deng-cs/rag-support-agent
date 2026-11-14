@@ -1,78 +1,81 @@
-from typing import Optional, List
-from fastapi import Depends, HTTPException, status
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from sqlalchemy.ext.asyncio import AsyncSession
+"""FastAPI dependencies: service container and authentication."""
 
-from app.db.session import get_db
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Annotated
+
+from fastapi import Depends, HTTPException, Request, status
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+
+from app.core.config import Settings
 from app.core.security import decode_access_token
-from app.repositories.user_repo import UserRepository
-from app.models.schema import User
+from app.db.models import Role, User
+from app.db.session import Database
+from app.rag.embeddings import Embedder
+from app.rag.pipeline import RagPipeline
 
-security_scheme = HTTPBearer(auto_error=False)
 
-async def get_current_user(
-    credentials: Optional[HTTPAuthorizationCredentials] = Depends(security_scheme),
-    db: AsyncSession = Depends(get_db)
-) -> User:
-    """
-    依赖项：强制解析并验证 JWT Token，返回已认证的用户对象
-    """
-    if not credentials or not credentials.credentials:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="缺少身份凭证，请携带 Bearer JWT Token",
-            headers={"WWW-Authenticate": "Bearer"}
-        )
+@dataclass(frozen=True, slots=True)
+class Services:
+    settings: Settings
+    db: Database
+    embedder: Embedder
+    pipeline: RagPipeline
 
-    token = credentials.credentials
-    payload = decode_access_token(token)
-    if not payload:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Token 无效或已过期，请重新登录",
-            headers={"WWW-Authenticate": "Bearer"}
-        )
 
-    user_id = payload.get("sub")
-    if not user_id:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token 格式异常")
+@dataclass(frozen=True, slots=True)
+class Principal:
+    """The authenticated caller. `tenant_id` comes from the database, never from the client."""
 
-    repo = UserRepository(db)
-    user = await repo.get_by_id(int(user_id))
-    if not user or not user.is_active:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="用户不存在或已被禁用")
+    user_id: int
+    username: str
+    tenant_id: str
+    role: Role
 
-    return user
+    @property
+    def is_admin(self) -> bool:
+        return self.role == Role.ADMIN
 
-async def get_current_user_optional(
-    credentials: Optional[HTTPAuthorizationCredentials] = Depends(security_scheme),
-    db: AsyncSession = Depends(get_db)
-) -> Optional[User]:
-    """
-    可选认证依赖：若携带合法的 Token 则返回 User，否则返回 None (用于平滑兼容模式)
-    """
-    if not credentials or not credentials.credentials:
-        return None
-    payload = decode_access_token(credentials.credentials)
-    if not payload or not payload.get("sub"):
-        return None
-    repo = UserRepository(db)
-    return await repo.get_by_id(int(payload["sub"]))
 
-def require_roles(allowed_roles: List[str]):
-    """
-    RBAC 权限检查依赖工厂函数：验证用户角色是否在授权范围内
-    """
-    async def role_checker(current_user: User = Depends(get_current_user)) -> User:
-        if current_user.role not in allowed_roles:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"权限不足：当前角色 [{current_user.role}] 无法访问此资源，需要 [{', '.join(allowed_roles)}] 权限"
-            )
-        return current_user
-    return role_checker
+def get_services(request: Request) -> Services:
+    return request.app.state.services
 
-# 便捷快捷依赖
-require_admin = require_roles(["admin"])
-require_staff = require_roles(["admin", "staff"])
 
+ServicesDep = Annotated[Services, Depends(get_services)]
+
+_bearer = HTTPBearer(auto_error=False)
+_UNAUTHORIZED = HTTPException(
+    status_code=status.HTTP_401_UNAUTHORIZED,
+    detail="Invalid or missing credentials",
+    headers={"WWW-Authenticate": "Bearer"},
+)
+
+
+async def get_principal(
+    services: ServicesDep,
+    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(_bearer)],
+) -> Principal:
+    if credentials is None:
+        raise _UNAUTHORIZED
+    claims = decode_access_token(services.settings, credentials.credentials)
+    if claims is None:
+        raise _UNAUTHORIZED
+    async with services.db.session() as session:
+        user = await session.get(User, claims.user_id)
+    # Re-check against the database so deactivated users and stale role/tenant claims fail.
+    if user is None or not user.is_active or user.tenant_id != claims.tenant_id:
+        raise _UNAUTHORIZED
+    return Principal(user.id, user.username, user.tenant_id, Role(user.role))
+
+
+CurrentUser = Annotated[Principal, Depends(get_principal)]
+
+
+async def require_admin(principal: CurrentUser) -> Principal:
+    if not principal.is_admin:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Admin role required")
+    return principal
+
+
+AdminUser = Annotated[Principal, Depends(require_admin)]

@@ -1,0 +1,14 @@
+-- Creates the unprivileged role the application connects as.
+--
+-- Row-Level Security does not apply to superusers or BYPASSRLS roles, so the app must NOT
+-- connect as `postgres`. Run as a superuser, with psql variables:
+--   psql -v app_user=rag_app -v app_password=... -f app_role.psql
+CREATE EXTENSION IF NOT EXISTS vector;
+
+CREATE ROLE :"app_user" LOGIN PASSWORD :'app_password'
+    NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE;
+
+-- The app owns its tables (it runs CREATE TABLE on startup); FORCE ROW LEVEL SECURITY makes
+-- the policies apply to the owner as well.
+ALTER DATABASE :"DBNAME" OWNER TO :"app_user";
+GRANT ALL ON SCHEMA public TO :"app_user";

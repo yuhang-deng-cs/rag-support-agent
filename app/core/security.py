@@ -1,43 +1,70 @@
-import datetime
-from typing import Optional, Dict, Any
+"""Password hashing and JWT helpers."""
+
+from __future__ import annotations
+
+import secrets
+from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
+
 import bcrypt
 import jwt
 
-from app.core.config import settings
+from app.core.config import Settings
+
+TOKEN_ISSUER = "rag-support-agent"  # noqa: S105 - not a secret
+
 
 def hash_password(password: str) -> str:
-    """使用 bcrypt 对明文密码加盐哈希"""
-    pwd_bytes = password.encode("utf-8")
-    salt = bcrypt.gensalt()
-    return bcrypt.hashpw(pwd_bytes, salt).decode("utf-8")
+    return bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
 
-def verify_password(plain_password: str, hashed_password: str) -> bool:
-    """验证明文密码与哈希是否一致"""
+
+def verify_password(password: str, hashed: str) -> bool:
     try:
-        return bcrypt.checkpw(
-            plain_password.encode("utf-8"),
-            hashed_password.encode("utf-8")
-        )
-    except Exception:
+        return bcrypt.checkpw(password.encode("utf-8"), hashed.encode("utf-8"))
+    except ValueError:
         return False
 
-def create_access_token(data: Dict[str, Any], expires_delta: Optional[datetime.timedelta] = None) -> str:
-    """签发包含用户身份、角色与租户绑定的 JWT Access Token"""
-    to_encode = data.copy()
-    if expires_delta:
-        expire = datetime.datetime.now(datetime.timezone.utc) + expires_delta
-    else:
-        expire = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
-    
-    to_encode.update({"exp": expire})
-    encoded_jwt = jwt.encode(to_encode, settings.JWT_SECRET_KEY, algorithm=settings.JWT_ALGORITHM)
-    return encoded_jwt
 
-def decode_access_token(token: str) -> Optional[Dict[str, Any]]:
-    """解码并校验 JWT Token 合法性与过期时间"""
+@dataclass(frozen=True, slots=True)
+class TokenClaims:
+    user_id: int
+    tenant_id: str
+    role: str
+
+
+def create_access_token(settings: Settings, claims: TokenClaims) -> str:
+    now = datetime.now(UTC)
+    payload = {
+        "sub": str(claims.user_id),
+        "tid": claims.tenant_id,
+        "role": claims.role,
+        "iss": TOKEN_ISSUER,
+        "iat": now,
+        "exp": now + timedelta(minutes=settings.access_token_ttl_minutes),
+    }
+    return jwt.encode(payload, settings.jwt_secret, algorithm=settings.jwt_algorithm)
+
+
+def decode_access_token(settings: Settings, token: str) -> TokenClaims | None:
+    """Return the verified claims, or None for any invalid/expired/tampered token."""
     try:
-        payload = jwt.decode(token, settings.JWT_SECRET_KEY, algorithms=[settings.JWT_ALGORITHM])
-        return payload
-    except (jwt.PyJWTError, Exception):
+        payload = jwt.decode(
+            token,
+            settings.jwt_secret,
+            algorithms=[settings.jwt_algorithm],  # pinned: rejects "none" and alg confusion
+            issuer=TOKEN_ISSUER,
+            options={"require": ["sub", "tid", "role", "exp", "iss"]},
+        )
+        return TokenClaims(
+            user_id=int(payload["sub"]), tenant_id=payload["tid"], role=payload["role"]
+        )
+    except (jwt.PyJWTError, ValueError, TypeError):
         return None
 
+
+def new_invite_code() -> str:
+    return secrets.token_urlsafe(24)
+
+
+def new_tenant_suffix() -> str:
+    return secrets.token_hex(3)
