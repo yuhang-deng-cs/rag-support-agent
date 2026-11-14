@@ -1,0 +1,26 @@
+{"tenant": "acme", "question": "How long do refunds take to arrive?", "expect_file": "billing.md", "expect_text": "5 to 10 business days"}
+{"tenant": "acme", "question": "Can I get my money back on an annual plan?", "expect_file": "billing.md", "expect_text": "within 30 days of purchase"}
+{"tenant": "acme", "question": "How much does the Team plan cost?", "expect_file": "billing.md", "expect_text": "$99 per month"}
+{"tenant": "acme", "question": "What happens if my card payment fails?", "expect_file": "billing.md", "expect_text": "retry three times"}
+{"tenant": "acme", "question": "Which identity providers do you support for SSO?", "expect_file": "sso.md", "expect_text": "Okta"}
+{"tenant": "acme", "question": "How do I configure SAML single sign-on?", "expect_file": "sso.md", "expect_text": "ACS"}
+{"tenant": "acme", "question": "Do you support automatic user provisioning?", "expect_file": "sso.md", "expect_text": "SCIM"}
+{"tenant": "acme", "question": "What is the API rate limit for Team keys?", "expect_file": "api-limits.md", "expect_text": "600 requests per minute"}
+{"tenant": "acme", "question": "What status code is returned when I exceed the rate limit?", "expect_file": "api-limits.md", "expect_text": "429"}
+{"tenant": "acme", "question": "How are webhook payloads signed?", "expect_file": "api-limits.md", "expect_text": "HMAC-SHA256"}
+{"tenant": "acme", "question": "How long are deleted projects kept before permanent deletion?", "expect_file": "data-retention.md", "expect_text": "30 days"}
+{"tenant": "acme", "question": "In which regions is customer data stored?", "expect_file": "data-retention.md", "expect_text": "Frankfurt"}
+{"tenant": "acme", "question": "What happens to our data after we cancel?", "expect_file": "data-retention.md", "expect_text": "90 days"}
+{"tenant": "umbra", "question": "When are SMS appointment reminders sent?", "expect_file": "appointments.md", "expect_text": "48 hours"}
+{"tenant": "umbra", "question": "Can patients cancel their appointment online?", "expect_file": "appointments.md", "expect_text": "24 hours before"}
+{"tenant": "umbra", "question": "How does the no-show fee work?", "expect_file": "appointments.md", "expect_text": "1 hour after"}
+{"tenant": "umbra", "question": "Do you sign a BAA for HIPAA?", "expect_file": "hipaa.md", "expect_text": "Business Associate Agreement"}
+{"tenant": "umbra", "question": "How is patient data encrypted?", "expect_file": "hipaa.md", "expect_text": "AES-256"}
+{"tenant": "umbra", "question": "What caused the duplicate SMS incident?", "expect_file": "internal-incident-2026-03.md", "expect_text": "idempotency key"}
+{"tenant": "acme", "question": "What caused the duplicate SMS incident at Riverside?", "expect_file": null, "kind": "cross-tenant"}
+{"tenant": "acme", "question": "Do you sign a HIPAA Business Associate Agreement?", "expect_file": null, "kind": "cross-tenant"}
+{"tenant": "umbra", "question": "What is the API rate limit for Team keys?", "expect_file": null, "kind": "cross-tenant"}
+{"tenant": "umbra", "question": "How do I configure SAML single sign-on with Okta?", "expect_file": null, "kind": "cross-tenant"}
+{"tenant": "acme", "question": "What is the capital of France?", "expect_file": null, "kind": "off-topic"}
+{"tenant": "acme", "question": "Write me a poem about the ocean.", "expect_file": null, "kind": "off-topic"}
+{"tenant": "umbra", "question": "Who won the 2022 football world cup?", "expect_file": null, "kind": "off-topic"}
