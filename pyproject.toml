@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "rag-support-agent"
-version = "0.2.0"
+version = "0.3.0"
 description = "Multi-tenant RAG support agent with database-enforced tenant isolation (Postgres RLS + pgvector)."
 readme = "README.md"
 license = { file = "LICENSE" }

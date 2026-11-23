@@ -35,6 +35,7 @@ def make_settings(database_url: str, **overrides) -> Settings:
         "retrieval_min_score": 0.15,
         "chunk_size": 400,
         "chunk_overlap": 60,
+        "rate_limit_enabled": False,  # enabled explicitly in tests/test_operations.py
     } | overrides
     return Settings(_env_file=None, **values)
 

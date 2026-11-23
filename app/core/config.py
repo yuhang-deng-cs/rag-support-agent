@@ -69,6 +69,13 @@ class Settings(BaseSettings):
     seed_demo: bool = False
     cors_origins: list[str] = Field(default_factory=list)
 
+    # --- Rate limiting ------------------------------------------------------
+    # "memory" for a single API process; "redis" (uses REDIS_URL) when replicas must share limits.
+    rate_limit_enabled: bool = True
+    rate_limit_backend: Literal["memory", "redis"] = "memory"
+    login_rate_per_minute: int = Field(default=10, ge=1)  # per client IP + username
+    chat_rate_per_minute: int = Field(default=30, ge=1)  # per user
+
     @model_validator(mode="after")
     def _validate(self) -> Settings:
         if self.chunk_overlap >= self.chunk_size:

@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.3.0 — 2026-11-23
+
+### Added
+- Rate limiting for `/auth/login` (per client IP + username) and `/chat/stream` (per user), returning
+  `429` with `Retry-After`. In-memory by default; `RATE_LIMIT_BACKEND=redis` shares counters across
+  API replicas.
+- `limit` / `offset` pagination on `GET /documents` and `GET /tickets`, with the total in
+  `X-Total-Count`.
+- `X-Request-ID` on every response (a well-formed incoming ID is reused, anything else replaced) and
+  a structured access log line per API request.
+
 ## 0.2.0 — 2026-11-14
 
 A rewrite focused on verifiable tenant isolation.

@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, status
-from sqlalchemy import select
+from typing import Annotated
+
+from fastapi import APIRouter, Query, Response, status
+from sqlalchemy import func, select
 
 from app.api.deps import CurrentUser, ServicesDep
 from app.api.schemas import TicketCreate, TicketOut
@@ -28,11 +30,22 @@ async def create_ticket(body: TicketCreate, user: CurrentUser, services: Service
 
 
 @router.get("")
-async def list_tickets(user: CurrentUser, services: ServicesDep) -> list[TicketOut]:
-    """Admins see all tickets of their workspace; members see their own."""
+async def list_tickets(
+    user: CurrentUser,
+    services: ServicesDep,
+    response: Response,
+    limit: Annotated[int, Query(ge=1, le=100)] = 50,
+    offset: Annotated[int, Query(ge=0)] = 0,
+) -> list[TicketOut]:
+    """Admins see all tickets of their workspace; members see their own. Newest first;
+    the total is returned in the `X-Total-Count` header."""
     query = select(Ticket).where(Ticket.tenant_id == user.tenant_id)
     if not user.is_admin:
         query = query.where(Ticket.created_by == user.user_id)
     async with services.db.tenant_session(user.tenant_id) as session:
-        tickets = await session.scalars(query.order_by(Ticket.id.desc()).limit(200))
+        total = await session.scalar(select(func.count()).select_from(query.subquery()))
+        tickets = await session.scalars(
+            query.order_by(Ticket.id.desc()).limit(limit).offset(offset)
+        )
+        response.headers["X-Total-Count"] = str(total or 0)
         return [TicketOut.model_validate(t) for t in tickets]

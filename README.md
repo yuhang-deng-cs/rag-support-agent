@@ -46,6 +46,8 @@ This project treats tenant isolation as a **database invariant**, not a coding c
 - ✂️ **Context pruning** that trims retrieved chunks before the LLM call — with measured savings, not marketing numbers
 - 🙋 **Human escalation**: unanswerable questions become tickets
 - 👥 **Workspaces & invites**: sign-up creates a tenant + admin; teammates join with single-use invite codes
+- 🚦 **Rate limiting** on login (per IP + username) and chat (per user), in-memory or shared via Redis, with `429` + `Retry-After`
+- 📄 **Paginated lists** (`limit` / `offset`, total in `X-Total-Count`) and an **`X-Request-ID`** on every response, written to the access log
 - 📊 **Reproducible evaluation** (`scripts/eval.py`) with a threshold sweep, run in CI
 
 ## Quick start
@@ -157,13 +159,13 @@ Interactive docs at `/docs`. All endpoints are under `/api/v1`.
 |---|---|---|---|
 | `POST` | `/auth/signup` | public | Create a workspace (tenant); caller becomes its admin |
 | `POST` | `/auth/join` | public | Join a workspace with a single-use invite code |
-| `POST` | `/auth/login` | public | Get an access token |
+| `POST` | `/auth/login` | public | Get an access token (rate limited per IP + username) |
 | `GET` | `/auth/me` | member | Current user |
 | `POST` | `/invites` | admin | Create an invite (`member` or `admin`) |
 | `POST` | `/documents` | admin | Upload `.txt` / `.md` / `.pdf` (202, processed in background) |
-| `GET` | `/documents`, `/documents/{id}` | member | List / poll status |
+| `GET` | `/documents`, `/documents/{id}` | member | List (`?limit=&offset=`, total in `X-Total-Count`) / poll status |
 | `DELETE` | `/documents/{id}` | admin | Delete a document and its chunks |
-| `POST` | `/chat/stream` | member | Ask a question — SSE events `sources`, `context`, `token`, `done` |
+| `POST` | `/chat/stream` | member | Ask a question — SSE events `sources`, `context`, `token`, `done` (rate limited per user) |
 | `POST`/`GET` | `/tickets` | member | Escalate a question / list escalations |
 | `GET` | `/health` | public | Status, DB dialect, RLS status, providers |
 
@@ -206,7 +208,8 @@ Honest about what this is: a well-tested reference implementation, not a turnkey
 
 - [ ] Alembic migrations (schema is currently created on startup)
 - [ ] Hybrid search (BM25 + vectors) and reranking
-- [ ] Rate limiting and audit log
+- [x] Rate limiting (login + chat), pagination, request IDs
+- [ ] Audit log
 - [ ] Conversation memory / follow-up questions
 - [ ] Larger evaluation set, including multilingual queries
 - Context pruning is a lexical heuristic; the extractive mode is a fallback, not an LLM.

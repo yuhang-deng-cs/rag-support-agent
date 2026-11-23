@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from datetime import UTC, datetime, timedelta
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, Request, status
 from sqlalchemy import or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -21,6 +21,7 @@ from app.api.schemas import (
     UserOut,
 )
 from app.core.config import Settings
+from app.core.ratelimit import client_ip, enforce
 from app.core.security import (
     TokenClaims,
     create_access_token,
@@ -113,8 +114,15 @@ async def join(body: JoinRequest, services: ServicesDep) -> TokenResponse:
     return _issue(services.settings, user)
 
 
-@router.post("/auth/login")
-async def login(body: LoginRequest, services: ServicesDep) -> TokenResponse:
+@router.post("/auth/login", responses={429: {"description": "Too many login attempts"}})
+async def login(body: LoginRequest, request: Request, services: ServicesDep) -> TokenResponse:
+    # Per IP + username: slows password guessing without letting one client lock out a victim
+    # from every network.
+    await enforce(
+        request,
+        f"login:{client_ip(request)}:{body.username.lower()}",
+        services.settings.login_rate_per_minute,
+    )
     async with services.db.session() as session:
         user = await session.scalar(select(User).where(User.username == body.username))
     valid = verify_password(body.password, user.hashed_password if user else _DUMMY_HASH)

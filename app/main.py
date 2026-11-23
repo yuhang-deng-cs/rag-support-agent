@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import logging
+import re
+import time
+import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -16,6 +19,7 @@ from app.api.deps import Services
 from app.api.routes import auth, chat, documents, tickets
 from app.api.schemas import HealthOut
 from app.core.config import Settings, get_settings
+from app.core.ratelimit import build_limiter
 from app.db.session import Database
 from app.rag.embeddings import build_embedder
 from app.rag.llm import build_generator
@@ -23,13 +27,21 @@ from app.rag.pipeline import RagPipeline
 
 STATIC_DIR = Path(__file__).parent / "static"
 API_PREFIX = "/api/v1"
+_REQUEST_ID = re.compile(r"[A-Za-z0-9._-]{1,64}")
+access_log = logging.getLogger("app.access")
 
 
 def build_services(settings: Settings) -> Services:
     db = Database(settings.database_url)
     embedder = build_embedder(settings)
     pipeline = RagPipeline(db, embedder, build_generator(settings), settings)
-    return Services(settings=settings, db=db, embedder=embedder, pipeline=pipeline)
+    return Services(
+        settings=settings,
+        db=db,
+        embedder=embedder,
+        pipeline=pipeline,
+        limiter=build_limiter(settings),
+    )
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -61,8 +73,29 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             CORSMiddleware,
             allow_origins=settings.cors_origins,
             allow_methods=["GET", "POST", "DELETE"],
-            allow_headers=["Authorization", "Content-Type"],
+            allow_headers=["Authorization", "Content-Type", "X-Request-ID"],
+            expose_headers=["X-Request-ID", "X-Total-Count", "Retry-After"],
         )
+
+    @app.middleware("http")
+    async def request_id_and_access_log(request: Request, call_next):
+        """Tag every request with an ID (reused from the caller when well-formed) and log it."""
+        incoming = request.headers.get("X-Request-ID", "")
+        request_id = incoming if _REQUEST_ID.fullmatch(incoming) else uuid.uuid4().hex[:16]
+        request.state.request_id = request_id
+        started = time.perf_counter()
+        response = await call_next(request)
+        response.headers["X-Request-ID"] = request_id
+        if request.url.path.startswith(API_PREFIX):
+            access_log.info(
+                "%s %s %s %.1fms request_id=%s",
+                request.method,
+                request.url.path,
+                response.status_code,
+                (time.perf_counter() - started) * 1000,
+                request_id,
+            )
+        return response
 
     for module in (auth, documents, chat, tickets):
         app.include_router(module.router, prefix=API_PREFIX)

@@ -9,6 +9,7 @@ from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from app.core.config import Settings
+from app.core.ratelimit import Limiter
 from app.core.security import decode_access_token
 from app.db.models import Role, User
 from app.db.session import Database
@@ -22,6 +23,7 @@ class Services:
     db: Database
     embedder: Embedder
     pipeline: RagPipeline
+    limiter: Limiter
 
 
 @dataclass(frozen=True, slots=True)

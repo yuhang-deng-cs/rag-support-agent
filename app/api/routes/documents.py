@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import contextlib
 import logging
+from typing import Annotated
 
-from fastapi import APIRouter, BackgroundTasks, HTTPException, UploadFile, status
-from sqlalchemy import select
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Query, Response, UploadFile, status
+from sqlalchemy import func, select
 
 from app.api.deps import AdminUser, CurrentUser, Services, ServicesDep
 from app.api.schemas import DocumentOut
@@ -75,13 +76,23 @@ async def upload_document(
 
 
 @router.get("")
-async def list_documents(user: CurrentUser, services: ServicesDep) -> list[DocumentOut]:
+async def list_documents(
+    user: CurrentUser,
+    services: ServicesDep,
+    response: Response,
+    limit: Annotated[int, Query(ge=1, le=100)] = 50,
+    offset: Annotated[int, Query(ge=0)] = 0,
+) -> list[DocumentOut]:
+    """Newest first. The total is returned in the `X-Total-Count` header."""
+    query = select(Document).where(Document.tenant_id == user.tenant_id)
     async with services.db.tenant_session(user.tenant_id) as session:
+        total = await session.scalar(select(func.count()).select_from(query.subquery()))
         docs = await session.scalars(
-            select(Document)
-            .where(Document.tenant_id == user.tenant_id)
-            .order_by(Document.created_at.desc(), Document.id.desc())
+            query.order_by(Document.created_at.desc(), Document.id.desc())
+            .limit(limit)
+            .offset(offset)
         )
+        response.headers["X-Total-Count"] = str(total or 0)
         return [DocumentOut.model_validate(d) for d in docs]
 
 
