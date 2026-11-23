@@ -95,15 +95,15 @@ LLM_API_KEY=sk-...
 
 ## 性能
 
-CI 压测（[工作流](.github/workflows/perf.yml)，[运行记录](https://github.com/yuhang-deng-cs/rag-support-agent/actions/runs/45091973843)）：PostgreSQL 16 + pgvector，RLS 开启，
-租户内 **2 万+ 文本块**，**20 个并发用户**，单个 uvicorn 进程。
+CI 压测（[工作流](.github/workflows/perf.yml)）：PostgreSQL 16 + pgvector，RLS 开启，租户内 **2 万+ 文本块**，
+**20 个并发用户**，单个 uvicorn 进程，0 失败。共享 CI 机器性能有波动，两次结果都列出：
 
 | 接口 | p50 | p95 | p99 | 吞吐 |
 |---|---:|---:|---:|---:|
-| `POST /search` | 16 ms | **65 ms** | 130 ms | 45.8 次/秒 |
-| `POST /chat/stream`（完整抽取式回答） | 17 ms | 60 ms | 160 ms | 11.5 次/秒 |
+| `POST /search` —— [第 1 次](https://github.com/yuhang-deng-cs/rag-support-agent/actions/runs/45091973843) | 16 ms | **65 ms** | 130 ms | 45.8 次/秒 |
+| `POST /search` —— [第 2 次](https://github.com/yuhang-deng-cs/rag-support-agent/actions/runs/45092369216) | 58 ms | **140 ms** | 230 ms | 39.5 次/秒 |
 
-其中向量检索本身 p50 为 5 ms（p95 35 ms）。测试环境与复现方法见 [docs/performance.md](docs/performance.md)。
+其中向量检索本身 p50 为 5–14 ms（p95 35–40 ms）。测试环境与复现方法见 [docs/performance.md](docs/performance.md)。
 
 ## 许可证
 
