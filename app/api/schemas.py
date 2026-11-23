@@ -130,3 +130,45 @@ class HealthOut(BaseModel):
 
 class ErrorOut(BaseModel):
     detail: str = Field(examples=["Not found"])
+
+
+# --- Search -----------------------------------------------------------------
+
+
+class SearchRequest(StrictModel):
+    query: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=2000)]
+    top_k: Annotated[int, Field(ge=1, le=20)] | None = None
+
+
+class SearchHit(BaseModel):
+    document_id: int
+    filename: str
+    chunk_index: int
+    heading: str | None
+    score: float
+    above_threshold: bool  # whether /chat/stream would use this chunk (RETRIEVAL_MIN_SCORE)
+    snippet: str
+
+
+class SearchOut(BaseModel):
+    results: list[SearchHit]
+    embed_ms: float
+    search_ms: float
+
+
+# --- Audit ------------------------------------------------------------------
+
+
+class AuditEventOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    action: str
+    actor_id: int | None
+    actor_username: str | None = None
+    target_type: str | None
+    target_id: str | None
+    detail: dict
+    ip: str | None
+    request_id: str | None
+    created_at: datetime

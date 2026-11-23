@@ -1,0 +1,93 @@
+name: Load test
+
+# Reproducible latency numbers: the API against PostgreSQL 16 + pgvector (RLS on), driven by Locust.
+# Results: job summary, annotations and the `load-test-results` artifact.
+on:
+  workflow_dispatch:
+    inputs:
+      users:
+        description: Concurrent users
+        default: "20"
+      chunks:
+        description: Extra synthetic chunks in the tenant
+        default: "20000"
+      duration:
+        description: Test duration
+        default: "60s"
+  push:
+    branches: [main]
+    paths: ["loadtest/**", "scripts/seed_bulk.py", ".github/workflows/perf.yml"]
+
+permissions:
+  contents: read
+
+jobs:
+  load-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_DB: rag
+          POSTGRES_PASSWORD: postgres
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      DATABASE_URL: postgresql://rag_app:rag_app_ci@localhost:5432/rag
+      APP_ENV: development
+      SEED_DEMO: "true"
+      RATE_LIMIT_ENABLED: "false"
+      EMBEDDING_PROVIDER: fastembed
+      LLM_PROVIDER: extractive
+      LOG_LEVEL: WARNING
+      USERS: ${{ inputs.users || '20' }}
+      CHUNKS: ${{ inputs.chunks || '20000' }}
+      DURATION: ${{ inputs.duration || '60s' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Create the application database role (RLS applies to it)
+        env:
+          PGPASSWORD: postgres
+        run: >
+          psql -h localhost -U postgres -d rag -v ON_ERROR_STOP=1
+          -v app_user=rag_app -v app_password=rag_app_ci
+          -f infra/postgres/app_role.psql
+      - run: pip install -e ".[local]" "locust>=2.29"
+      - name: Start the API (one worker)
+        run: |
+          nohup uvicorn app.main:app --host 127.0.0.1 --port 8000 --workers 1 > api.log 2>&1 &
+          for i in $(seq 90); do
+            curl -sf localhost:8000/api/v1/health && exit 0
+            sleep 2
+          done
+          cat api.log; exit 1
+      - name: Grow the index
+        run: python scripts/seed_bulk.py --tenant acme --chunks "$CHUNKS"
+      - name: Warm up (model load, connection pool, caches)
+        run: >
+          locust -f loadtest/locustfile.py --headless -u 5 -r 5 -t 15s
+          --host http://127.0.0.1:8000 --only-summary
+      - name: Load test
+        run: >
+          locust -f loadtest/locustfile.py --headless -u "$USERS" -r 10 -t "$DURATION"
+          --host http://127.0.0.1:8000 --csv loadtest/out/run --only-summary
+      - name: Summary
+        run: |
+          python loadtest/summarize.py loadtest/out/run_stats.csv loadtest/out/server_timings.json \
+            --users "$USERS" --chunks "$CHUNKS" --duration "$DURATION" | tee summary.md
+          grep -v '^::' summary.md >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: load-test-results
+          path: |
+            loadtest/out/
+            summary.md
+            api.log

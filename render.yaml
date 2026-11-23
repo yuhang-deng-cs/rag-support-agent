@@ -1,0 +1,45 @@
+# Render Blueprint: one click creates the API (Docker) and a PostgreSQL database with pgvector.
+#   https://render.com/deploy?repo=https://github.com/yuhang-deng-cs/rag-support-agent
+# Free plans: the web service sleeps after ~15 min idle (first request then takes ~1 min) and the
+# free database expires after 30 days - see docs/deploy.md for a permanent free database (Neon).
+services:
+  - type: web
+    name: rag-support-agent
+    runtime: docker
+    plan: free
+    region: singapore
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /api/v1/health
+    autoDeploy: true
+    envVars:
+      - key: APP_ENV
+        value: demo
+      - key: SEED_DEMO
+        value: "true"
+      - key: JWT_SECRET
+        generateValue: true
+      - key: DATABASE_URL
+        fromDatabase:
+          name: rag-support-agent-db
+          property: connectionString
+      - key: EMBEDDING_PROVIDER
+        value: fastembed
+      - key: LLM_PROVIDER
+        value: extractive
+      # Render's proxy is the only route in, so trust its X-Forwarded-For for client IPs.
+      - key: FORWARDED_ALLOW_IPS
+        value: "*"
+      - key: MAX_UPLOAD_MB
+        value: "2"
+      - key: LOGIN_RATE_PER_MINUTE
+        value: "10"
+      - key: CHAT_RATE_PER_MINUTE
+        value: "20"
+
+databases:
+  - name: rag-support-agent-db
+    plan: free
+    region: singapore
+    databaseName: rag
+    user: rag_app
+    postgresMajorVersion: "16"

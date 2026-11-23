@@ -6,11 +6,21 @@ import contextlib
 import logging
 from typing import Annotated
 
-from fastapi import APIRouter, BackgroundTasks, HTTPException, Query, Response, UploadFile, status
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    HTTPException,
+    Query,
+    Request,
+    Response,
+    UploadFile,
+    status,
+)
 from sqlalchemy import func, select
 
 from app.api.deps import AdminUser, CurrentUser, Services, ServicesDep
 from app.api.schemas import DocumentOut
+from app.audit import add_event
 from app.db.models import Document
 from app.ingestion.service import ingest_document
 from app.rag.parsing import UnsupportedFileError, content_type_for, extract_text
@@ -45,7 +55,11 @@ def dispatch_ingestion(
 
 @router.post("", status_code=status.HTTP_202_ACCEPTED)
 async def upload_document(
-    file: UploadFile, admin: AdminUser, services: ServicesDep, background: BackgroundTasks
+    file: UploadFile,
+    request: Request,
+    admin: AdminUser,
+    services: ServicesDep,
+    background: BackgroundTasks,
 ) -> DocumentOut:
     """Upload a .txt, .md or .pdf file. Processing happens in the background; poll its status."""
     filename = (file.filename or "").strip()
@@ -70,6 +84,16 @@ async def upload_document(
         session.add(doc)
         await session.flush()
         out = DocumentOut.model_validate(doc)
+        add_event(
+            session,
+            tenant_id=admin.tenant_id,
+            action="document.uploaded",
+            request=request,
+            actor_id=admin.user_id,
+            target_type="document",
+            target_id=doc.id,
+            detail={"filename": doc.filename, "bytes": len(data)},
+        )
 
     dispatch_ingestion(services, background, admin.tenant_id, doc.id)
     return out
@@ -108,7 +132,9 @@ async def get_document(document_id: int, user: CurrentUser, services: ServicesDe
 
 
 @router.delete("/{document_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_document(document_id: int, admin: AdminUser, services: ServicesDep) -> None:
+async def delete_document(
+    document_id: int, request: Request, admin: AdminUser, services: ServicesDep
+) -> None:
     async with services.db.tenant_session(admin.tenant_id) as session:
         doc = await session.scalar(
             select(Document).where(
@@ -117,4 +143,14 @@ async def delete_document(document_id: int, admin: AdminUser, services: Services
         )
         if doc is None:
             raise _not_found()
+        add_event(
+            session,
+            tenant_id=admin.tenant_id,
+            action="document.deleted",
+            request=request,
+            actor_id=admin.user_id,
+            target_type="document",
+            target_id=doc.id,
+            detail={"filename": doc.filename},
+        )
         await session.delete(doc)

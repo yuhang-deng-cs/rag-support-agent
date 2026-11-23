@@ -41,6 +41,10 @@ ORM 查询写错一次，或者一次被 prompt 注入的工具调用，向量�
 - 👥 工作区 + 一次性邀请码加入
 - 🚦 登录（按 IP + 用户名）与问答（按用户）**限流**，可用内存或 Redis 共享计数，超限返回 `429` + `Retry-After`
 - 📄 列表接口**分页**（`limit` / `offset`，总数在 `X-Total-Count`），每个响应带 **`X-Request-ID`** 并写入访问日志
+- 🧾 **审计日志**：注册、登录及失败登录、邀请、上传、删除、工单——按租户隔离，且在数据库层面**只能追加**（RLS 只允许 SELECT 与 INSERT）
+- 🗄️ **Alembic 迁移**：启动时自动执行；模型改了却没写迁移时测试会失败；CI 在 SQLite 与 PostgreSQL 上验证升级与回退
+- ⏱️ **压测数据可复现**：GitHub Actions 中基于 PostgreSQL + pgvector 运行 Locust 压测
+- 🚀 一键部署演示：[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/yuhang-deng-cs/rag-support-agent)（详见 [docs/deploy.md](docs/deploy.md)）
 
 ## 快速开始
 

@@ -20,6 +20,7 @@ from app.api.schemas import (
     TokenResponse,
     UserOut,
 )
+from app.audit import record
 from app.core.config import Settings
 from app.core.ratelimit import client_ip, enforce
 from app.core.security import (
@@ -57,7 +58,7 @@ async def _ensure_identity_free(session: AsyncSession, username: str, email: str
 
 
 @router.post("/auth/signup", status_code=status.HTTP_201_CREATED)
-async def signup(body: SignupRequest, services: ServicesDep) -> TokenResponse:
+async def signup(body: SignupRequest, request: Request, services: ServicesDep) -> TokenResponse:
     """Create a new workspace (tenant). The caller becomes its first admin."""
     if not services.settings.allow_public_signup:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Public sign-up is disabled")
@@ -82,11 +83,20 @@ async def signup(body: SignupRequest, services: ServicesDep) -> TokenResponse:
         raise HTTPException(
             status.HTTP_409_CONFLICT, "Username or email already registered"
         ) from exc
+    await record(
+        services.db,
+        tenant_id=user.tenant_id,
+        action="workspace.created",
+        request=request,
+        actor_id=user.id,
+        target_type="tenant",
+        target_id=user.tenant_id,
+    )
     return _issue(services.settings, user)
 
 
 @router.post("/auth/join", status_code=status.HTTP_201_CREATED)
-async def join(body: JoinRequest, services: ServicesDep) -> TokenResponse:
+async def join(body: JoinRequest, request: Request, services: ServicesDep) -> TokenResponse:
     """Join an existing workspace with a single-use invite code. Role comes from the invite."""
     try:
         async with services.db.session() as session:
@@ -107,10 +117,21 @@ async def join(body: JoinRequest, services: ServicesDep) -> TokenResponse:
             session.add(user)
             await session.flush()
             invite.used_by = user.id
+            invite_id = invite.id
     except IntegrityError as exc:
         raise HTTPException(
             status.HTTP_409_CONFLICT, "Username or email already registered"
         ) from exc
+    await record(
+        services.db,
+        tenant_id=user.tenant_id,
+        action="member.joined",
+        request=request,
+        actor_id=user.id,
+        target_type="invite",
+        target_id=invite_id,
+        detail={"role": user.role},
+    )
     return _issue(services.settings, user)
 
 
@@ -127,7 +148,23 @@ async def login(body: LoginRequest, request: Request, services: ServicesDep) -> 
         user = await session.scalar(select(User).where(User.username == body.username))
     valid = verify_password(body.password, user.hashed_password if user else _DUMMY_HASH)
     if user is None or not valid or not user.is_active:
+        if user is not None:  # unknown usernames have no workspace to log into
+            await record(
+                services.db,
+                tenant_id=user.tenant_id,
+                action="auth.login_failed",
+                request=request,
+                actor_id=user.id,
+                detail={"reason": "inactive" if valid else "bad_password"},
+            )
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Incorrect username or password")
+    await record(
+        services.db,
+        tenant_id=user.tenant_id,
+        action="auth.login",
+        request=request,
+        actor_id=user.id,
+    )
     return _issue(services.settings, user)
 
 
@@ -139,7 +176,9 @@ async def me(principal: CurrentUser, services: ServicesDep) -> UserOut:
 
 
 @router.post("/invites", status_code=status.HTTP_201_CREATED, tags=["admin"])
-async def create_invite(body: InviteRequest, admin: AdminUser, services: ServicesDep) -> InviteOut:
+async def create_invite(
+    body: InviteRequest, request: Request, admin: AdminUser, services: ServicesDep
+) -> InviteOut:
     """Create a single-use invite into the admin's own workspace."""
     expires = datetime.now(UTC) + timedelta(hours=services.settings.invite_ttl_hours)
     invite = Invite(
@@ -151,6 +190,18 @@ async def create_invite(body: InviteRequest, admin: AdminUser, services: Service
     )
     async with services.db.session() as session:
         session.add(invite)
+        await session.flush()
+        invite_id = invite.id
+    await record(  # never log the code itself: it is a credential until redeemed
+        services.db,
+        tenant_id=admin.tenant_id,
+        action="invite.created",
+        request=request,
+        actor_id=admin.user_id,
+        target_type="invite",
+        target_id=invite_id,
+        detail={"role": invite.role},
+    )
     return InviteOut(code=invite.code, role=Role(invite.role), expires_at=expires)
 
 

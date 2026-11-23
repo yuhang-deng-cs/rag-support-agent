@@ -4,18 +4,21 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from fastapi import APIRouter, Query, Response, status
+from fastapi import APIRouter, Query, Request, Response, status
 from sqlalchemy import func, select
 
 from app.api.deps import CurrentUser, ServicesDep
 from app.api.schemas import TicketCreate, TicketOut
+from app.audit import add_event
 from app.db.models import Ticket
 
 router = APIRouter(prefix="/tickets", tags=["tickets"])
 
 
 @router.post("", status_code=status.HTTP_201_CREATED)
-async def create_ticket(body: TicketCreate, user: CurrentUser, services: ServicesDep) -> TicketOut:
+async def create_ticket(
+    body: TicketCreate, request: Request, user: CurrentUser, services: ServicesDep
+) -> TicketOut:
     async with services.db.tenant_session(user.tenant_id) as session:
         ticket = Ticket(
             tenant_id=user.tenant_id,
@@ -24,6 +27,16 @@ async def create_ticket(body: TicketCreate, user: CurrentUser, services: Service
             note=body.note,
         )
         session.add(ticket)
+        await session.flush()
+        add_event(
+            session,
+            tenant_id=user.tenant_id,
+            action="ticket.created",
+            request=request,
+            actor_id=user.user_id,
+            target_type="ticket",
+            target_id=ticket.id,
+        )
         await session.flush()
         await session.refresh(ticket)
         return TicketOut.model_validate(ticket)

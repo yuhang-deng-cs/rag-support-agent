@@ -6,6 +6,10 @@ Two kinds of tables:
   happen before a tenant is known.
 * **Tenant-owned tables** (`documents`, `document_chunks`, `tickets`) carry `tenant_id` and,
   on PostgreSQL, are protected by Row-Level Security policies (see `app/db/rls.py`).
+* **Audit log** (`audit_events`) is tenant-owned too, and append-only on PostgreSQL: its RLS
+  policies allow SELECT and INSERT for the current tenant, and nothing else.
+
+The schema itself is created and evolved by Alembic migrations (`app/db/migrations`).
 """
 
 from __future__ import annotations
@@ -33,6 +37,7 @@ from app.core.config import get_settings
 EMBEDDING_DIM = get_settings().embedding_dim
 
 TENANT_OWNED_TABLES = ("documents", "document_chunks", "tickets")
+APPEND_ONLY_TABLES = ("audit_events",)
 
 
 class Base(DeclarativeBase):
@@ -173,3 +178,25 @@ class Ticket(Base):
     created_at: Mapped[datetime] = _now()
 
     __table_args__ = (Index("ix_tickets_tenant_status", "tenant_id", "status"),)
+
+
+class AuditEvent(Base):
+    """Who did what in a workspace: sign-ups, logins (and failed ones), invites, uploads, deletions.
+
+    Never stores secrets (passwords, invite codes, tokens) - only identifiers and small details.
+    """
+
+    __tablename__ = "audit_events"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    tenant_id: Mapped[str] = mapped_column(_tenant_fk())
+    actor_id: Mapped[int | None] = mapped_column(_user_fk("SET NULL"))
+    action: Mapped[str] = mapped_column(String(64))
+    target_type: Mapped[str | None] = mapped_column(String(32))
+    target_id: Mapped[str | None] = mapped_column(String(64))
+    detail: Mapped[dict] = mapped_column(JSON, default=dict)
+    ip: Mapped[str | None] = mapped_column(String(64))
+    request_id: Mapped[str | None] = mapped_column(String(64))
+    created_at: Mapped[datetime] = _now()
+
+    __table_args__ = (Index("ix_audit_tenant_created", "tenant_id", "created_at"),)

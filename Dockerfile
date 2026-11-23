@@ -20,12 +20,16 @@ RUN python -c "from fastembed import TextEmbedding; TextEmbedding('${EMBEDDING_M
 
 COPY app ./app
 COPY sample_docs ./sample_docs
+COPY alembic.ini ./
 RUN pip install --no-deps -e . \
     && useradd --system --uid 10001 --home /app app \
     && chown -R app /opt/models
 
 USER app
 EXPOSE 8000
-HEALTHCHECK --interval=15s --timeout=3s --start-period=30s \
-    CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/v1/health')"
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers"]
+# PaaS platforms (Render, Fly.io, Railway) inject $PORT. Migrations run on startup.
+# Behind a platform proxy, set FORWARDED_ALLOW_IPS so client IPs (rate limits, audit log) are real.
+ENV PORT=8000
+HEALTHCHECK --interval=15s --timeout=3s --start-period=60s \
+    CMD python -c "import os, urllib.request; urllib.request.urlopen(f\"http://127.0.0.1:{os.environ['PORT']}/api/v1/health\")"
+CMD ["sh", "-c", "exec uvicorn app.main:app --host 0.0.0.0 --port \"$PORT\" --proxy-headers"]

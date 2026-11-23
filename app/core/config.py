@@ -14,7 +14,8 @@ DEV_JWT_SECRET = "dev-only-insecure-secret-change-me"  # noqa: S105 - explicit d
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
-    app_env: Literal["development", "test", "production"] = "development"
+    # "demo" = a public demo: production-grade secrets, but the demo workspaces may be seeded
+    app_env: Literal["development", "test", "demo", "production"] = "development"
     log_level: str = "INFO"
 
     # --- Database -----------------------------------------------------------
@@ -75,16 +76,17 @@ class Settings(BaseSettings):
     rate_limit_backend: Literal["memory", "redis"] = "memory"
     login_rate_per_minute: int = Field(default=10, ge=1)  # per client IP + username
     chat_rate_per_minute: int = Field(default=30, ge=1)  # per user
+    search_rate_per_minute: int = Field(default=120, ge=1)  # per user
 
     @model_validator(mode="after")
     def _validate(self) -> Settings:
         if self.chunk_overlap >= self.chunk_size:
             raise ValueError("CHUNK_OVERLAP must be smaller than CHUNK_SIZE")
-        if self.app_env == "production":
-            if self.jwt_secret == DEV_JWT_SECRET or len(self.jwt_secret) < 32:
-                raise ValueError("Set JWT_SECRET to a random string of 32+ chars in production")
-            if self.seed_demo:
-                raise ValueError("SEED_DEMO must be disabled in production")
+        weak_secret = self.jwt_secret == DEV_JWT_SECRET or len(self.jwt_secret) < 32
+        if self.app_env in ("production", "demo") and weak_secret:
+            raise ValueError(f"Set JWT_SECRET to a random string of 32+ chars in {self.app_env}")
+        if self.app_env == "production" and self.seed_demo:
+            raise ValueError("SEED_DEMO must be disabled in production (use APP_ENV=demo)")
         return self
 
     @property

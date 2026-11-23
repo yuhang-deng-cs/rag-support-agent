@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "rag-support-agent"
-version = "0.3.0"
+version = "0.4.0"
 description = "Multi-tenant RAG support agent with database-enforced tenant isolation (Postgres RLS + pgvector)."
 readme = "README.md"
 license = { file = "LICENSE" }
@@ -23,6 +23,7 @@ dependencies = [
     "email-validator>=2.1",
     "python-multipart>=0.0.9",
     "sqlalchemy[asyncio]>=2.0.30",
+    "alembic>=1.13",
     "asyncpg>=0.29",
     "aiosqlite>=0.20",
     "pgvector>=0.3",

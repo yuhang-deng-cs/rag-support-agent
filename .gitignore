@@ -59,3 +59,8 @@ htmlcov/
 Thumbs.db
 
 .ruff_cache/
+
+# load test output
+loadtest/out/
+lt_*.db
+lt_api.log

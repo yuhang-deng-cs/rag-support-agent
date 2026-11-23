@@ -10,8 +10,8 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 
-from app.db.models import Base
-from app.db.rls import TENANT_SETTING, RlsStatus, apply_rls_policies, rls_status
+from app.db.migrate import upgrade_to_head
+from app.db.rls import TENANT_SETTING, RlsStatus, rls_status
 
 logger = logging.getLogger(__name__)
 
@@ -36,12 +36,10 @@ class Database:
         return self.engine.dialect.name == "postgresql"
 
     async def create_schema(self) -> None:
+        """Bring the schema to the latest Alembic revision (tables, indexes, RLS policies)."""
         async with self.engine.begin() as conn:
-            if self.is_postgres:
-                await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
-            await conn.run_sync(Base.metadata.create_all)
-            if self.is_postgres:
-                await apply_rls_policies(conn)
+            await conn.run_sync(upgrade_to_head)
+        async with self.engine.connect() as conn:
             self.rls = await rls_status(conn)
 
         if self.rls == "bypassed":

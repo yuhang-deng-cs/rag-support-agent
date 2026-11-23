@@ -47,3 +47,17 @@ With SQLite (`unsupported`), isolation relies on the application layer (layers 1
 ## Reporting a vulnerability
 
 See [SECURITY.md](../SECURITY.md).
+
+## Audit log
+
+Security-relevant actions are written to `audit_events`: workspace creation, joins, logins and
+failed logins (for known usernames), invites, uploads, deletions and tickets — with the actor, client
+IP and request ID. Secrets are never recorded (no passwords, tokens or invite codes).
+
+The table is tenant-owned like the others, and on PostgreSQL it has only two policies: `SELECT` and
+`INSERT` for the current tenant. With `FORCE ROW LEVEL SECURITY` there is no policy that allows
+`UPDATE` or `DELETE`, so the application role cannot rewrite or erase history — a compromised app
+can add misleading events but not remove the real ones. `tests/test_audit.py` checks this against
+PostgreSQL.
+
+Admins read it at `GET /api/v1/audit` (filter with `?action=auth.login_failed`).

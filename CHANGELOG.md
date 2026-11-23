@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.4.0 — 2026-11-23
+
+### Added
+- Alembic migrations (`app/db/migrations`): the initial schema with pgvector, the HNSW index and
+  RLS policies, then the audit log. The app upgrades on startup; databases created before
+  migrations are stamped at the baseline automatically. Tests check that migrations match the
+  models and run down and up again, on SQLite and PostgreSQL.
+- Audit log (`audit_events`, `GET /api/v1/audit` for admins): workspace creation, joins, logins and
+  failed logins, invites (never the code), uploads, deletions and tickets, with actor, IP and
+  request ID. Tenant-isolated, and append-only on PostgreSQL (no UPDATE/DELETE policy).
+- `POST /api/v1/search`: retrieval only, with `embed_ms` / `search_ms` and a `Server-Timing` header.
+- Load test (`loadtest/`, `scripts/seed_bulk.py`, `.github/workflows/perf.yml`) against PostgreSQL
+  + pgvector with a 20k-chunk tenant, published in the job summary.
+- `APP_ENV=demo`, a Render Blueprint (`render.yaml`) and `docs/deploy.md`; the image honours `$PORT`.
+
+### Changed
+- The schema is created by migrations instead of `metadata.create_all()`.
+
 ## 0.3.0 — 2026-11-23
 
 ### Added

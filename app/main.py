@@ -16,7 +16,7 @@ from fastapi.staticfiles import StaticFiles
 
 from app import __version__
 from app.api.deps import Services
-from app.api.routes import auth, chat, documents, tickets
+from app.api.routes import audit, auth, chat, documents, search, tickets
 from app.api.schemas import HealthOut
 from app.core.config import Settings, get_settings
 from app.core.ratelimit import build_limiter
@@ -97,7 +97,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             )
         return response
 
-    for module in (auth, documents, chat, tickets):
+    for module in (auth, documents, chat, search, tickets, audit):
         app.include_router(module.router, prefix=API_PREFIX)
 
     @app.get(f"{API_PREFIX}/health", tags=["system"])

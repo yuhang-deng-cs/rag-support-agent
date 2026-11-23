@@ -7,8 +7,9 @@
 [![CI](https://github.com/yuhang-deng-cs/rag-support-agent/actions/workflows/ci.yml/badge.svg)](https://github.com/yuhang-deng-cs/rag-support-agent/actions/workflows/ci.yml)
 [![Python](https://img.shields.io/badge/python-3.11%20%7C%203.12%20%7C%203.13-3776AB)](pyproject.toml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Load test](https://github.com/yuhang-deng-cs/rag-support-agent/actions/workflows/perf.yml/badge.svg)](https://github.com/yuhang-deng-cs/rag-support-agent/actions/workflows/perf.yml)
 
-English · [简体中文](README.zh-CN.md)
+English · [简体中文](README.zh-CN.md) · [![Deploy your own demo](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/yuhang-deng-cs/rag-support-agent)
 
 <img src="docs/images/acme.png" alt="Acme's agent answers a billing question with citations, then refuses a question about another tenant's incident" width="820">
 
@@ -48,6 +49,9 @@ This project treats tenant isolation as a **database invariant**, not a coding c
 - 👥 **Workspaces & invites**: sign-up creates a tenant + admin; teammates join with single-use invite codes
 - 🚦 **Rate limiting** on login (per IP + username) and chat (per user), in-memory or shared via Redis, with `429` + `Retry-After`
 - 📄 **Paginated lists** (`limit` / `offset`, total in `X-Total-Count`) and an **`X-Request-ID`** on every response, written to the access log
+- 🧾 **Audit log**: sign-ups, logins and failed logins, invites, uploads, deletions and tickets — tenant-isolated and **append-only at the database level** (RLS allows SELECT and INSERT only)
+- 🗄️ **Alembic migrations** run on startup; a test fails if a model changes without a migration, and migrations run up *and* down in CI on SQLite and PostgreSQL
+- ⏱️ **Measured, not claimed**: a [load test](#performance) against PostgreSQL + pgvector runs in GitHub Actions
 - 📊 **Reproducible evaluation** (`scripts/eval.py`) with a threshold sweep, run in CI
 
 ## Quick start
@@ -166,6 +170,8 @@ Interactive docs at `/docs`. All endpoints are under `/api/v1`.
 | `GET` | `/documents`, `/documents/{id}` | member | List (`?limit=&offset=`, total in `X-Total-Count`) / poll status |
 | `DELETE` | `/documents/{id}` | admin | Delete a document and its chunks |
 | `POST` | `/chat/stream` | member | Ask a question — SSE events `sources`, `context`, `token`, `done` (rate limited per user) |
+| `POST` | `/search` | member | Retrieval only: scored chunks + `embed_ms` / `search_ms` (also in `Server-Timing`) |
+| `GET` | `/audit` | admin | Workspace audit log (`?action=&limit=&offset=`) |
 | `POST`/`GET` | `/tickets` | member | Escalate a question / list escalations |
 | `GET` | `/health` | public | Status, DB dialect, RLS status, providers |
 
@@ -182,12 +188,14 @@ curl -N localhost:8000/api/v1/chat/stream -H "Authorization: Bearer $TOKEN" \
 app/
   api/            routes (auth, documents, chat, tickets), schemas, auth dependencies
   core/           settings, password hashing, JWT
-  db/             models, sessions (tenant_session), RLS policies
+  db/             models, sessions (tenant_session), RLS status, Alembic migrations
+  audit.py        audit log writer
   rag/            chunking, embeddings, retrieval, pruning, LLM providers, answer pipeline
   ingestion/      chunk → embed → store; optional Celery worker
   static/         dependency-free web UI
 infra/postgres/   unprivileged app role for RLS
 scripts/eval.py   retrieval / guardrail / pruning evaluation
+loadtest/         Locust load test + summary (run in .github/workflows/perf.yml)
 tests/            API, attack, RLS and unit tests (SQLite + PostgreSQL)
 ```
 
@@ -200,16 +208,34 @@ pytest                                          # SQLite
 TEST_DATABASE_URL=postgresql://rag_app:...@localhost:5432/rag_test pytest   # + PostgreSQL & RLS tests
 ```
 
+Schema changes go through Alembic (the app also upgrades on startup):
+
+```bash
+alembic revision --autogenerate -m "add column x"   # then review the generated file
+alembic upgrade head                                 # or: downgrade -1
+```
+
+`tests/test_migrations.py` fails if the models and the migrations disagree.
+
 See [CONTRIBUTING.md](CONTRIBUTING.md).
+
+## Deploy a demo
+
+One click with the [Render Blueprint](render.yaml) (Docker web service + PostgreSQL with pgvector,
+free plans): [![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/yuhang-deng-cs/rag-support-agent)
+
+Migrations and the demo seed run on startup; `/api/v1/health` reports whether RLS is enforced.
+Details, free-tier limits and other hosts: [docs/deploy.md](docs/deploy.md).
 
 ## Limitations & roadmap
 
 Honest about what this is: a well-tested reference implementation, not a turnkey product.
 
-- [ ] Alembic migrations (schema is currently created on startup)
+- [x] Alembic migrations
 - [ ] Hybrid search (BM25 + vectors) and reranking
 - [x] Rate limiting (login + chat), pagination, request IDs
-- [ ] Audit log
+- [x] Audit log (append-only on PostgreSQL)
+- [x] Load test with published latency numbers
 - [ ] Conversation memory / follow-up questions
 - [ ] Larger evaluation set, including multilingual queries
 - Context pruning is a lexical heuristic; the extractive mode is a fallback, not an LLM.
