@@ -155,6 +155,19 @@ The 29% of non-abstentions are questions where the agent retrieved a loosely rel
 
 The sample set is small and hand-written: treat these as a regression baseline, not a benchmark.
 
+## Performance
+
+Load test in CI ([workflow](.github/workflows/perf.yml), [run](https://github.com/yuhang-deng-cs/rag-support-agent/actions/runs/45091973843)): PostgreSQL 16 + pgvector
+with RLS on, a tenant with **20,000+ chunks**, **20 concurrent users**, one uvicorn worker.
+
+| Endpoint | p50 | p95 | p99 | Throughput |
+|---|---:|---:|---:|---:|
+| `POST /search` | 16 ms | **65 ms** | 130 ms | 45.8 req/s |
+| `POST /chat/stream` (full extractive answer) | 17 ms | 60 ms | 160 ms | 11.5 req/s |
+
+The vector search itself takes 5 ms at p50 (35 ms p95). Setup, breakdown and how to reproduce:
+[docs/performance.md](docs/performance.md).
+
 ## API
 
 Interactive docs at `/docs`. All endpoints are under `/api/v1`.

@@ -47,8 +47,8 @@ jobs:
       CHUNKS: ${{ inputs.chunks || '20000' }}
       DURATION: ${{ inputs.duration || '60s' }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
           cache: pip
@@ -83,7 +83,7 @@ jobs:
           python loadtest/summarize.py loadtest/out/run_stats.csv loadtest/out/server_timings.json \
             --users "$USERS" --chunks "$CHUNKS" --duration "$DURATION" | tee summary.md
           grep -v '^::' summary.md >> "$GITHUB_STEP_SUMMARY"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: load-test-results

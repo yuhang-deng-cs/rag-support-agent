@@ -93,6 +93,18 @@ LLM_API_KEY=sk-...
 
 更多细节（架构、API、安全模型、路线图）请见 [英文 README](README.md) 与 [docs/security.md](docs/security.md)。
 
+## 性能
+
+CI 压测（[工作流](.github/workflows/perf.yml)，[运行记录](https://github.com/yuhang-deng-cs/rag-support-agent/actions/runs/45091973843)）：PostgreSQL 16 + pgvector，RLS 开启，
+租户内 **2 万+ 文本块**，**20 个并发用户**，单个 uvicorn 进程。
+
+| 接口 | p50 | p95 | p99 | 吞吐 |
+|---|---:|---:|---:|---:|
+| `POST /search` | 16 ms | **65 ms** | 130 ms | 45.8 次/秒 |
+| `POST /chat/stream`（完整抽取式回答） | 17 ms | 60 ms | 160 ms | 11.5 次/秒 |
+
+其中向量检索本身 p50 为 5 ms（p95 35 ms）。测试环境与复现方法见 [docs/performance.md](docs/performance.md)。
+
 ## 许可证
 
 [MIT](LICENSE)
